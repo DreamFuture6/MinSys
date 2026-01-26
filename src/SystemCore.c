@@ -58,7 +58,9 @@ struct Task {
 
 static bool looping;
 static u16 taskFlag; // [0~7]:delay [8]:close [9]:suspend
+#ifdef IDLE_HOOK_FUNCITON
 static TaskMainFunc idleTask;
+#endif
 
 static TaskIndex currTimeTaskIndex, currExecTaskIndex;
 static Task taskList[TASK_MAX_NUM];
@@ -155,7 +157,9 @@ void System_Init(void)
         taskList[i].curr = i;
         taskList[i].next = __EndOfTaskList;
     }
+#ifdef IDLE_HOOK_FUNCITON
     idleTask = NULL;
+#endif
 #ifdef ENABLE_EVENT_TASK
     eventQueue[0] = __EndOfEvtList;
 #endif
@@ -234,19 +238,29 @@ void System_Loop(void)
                     }
                     break;
                 }
-            } else if (idleTask) {
+            }
+#ifdef IDLE_HOOK_FUNCITON
+            else if (idleTask) {
                 u32 currIdleTick = System_GetCurrTick();
                 idleTask(currIdleTick, lastIdleTick);
                 lastIdleTick = currIdleTick;
             }
+#endif
         }
+#ifdef AUTO_SLEEP
+        else {
+            System_Sleep();
+        }
+#endif
     }
 }
 
+#ifdef IDLE_HOOK_FUNCITON
 void System_RegisterIdleTask(TaskMainFunc func)
 {
     idleTask = func;
 }
+#endif
 
 void System_EndLoop(void)
 {

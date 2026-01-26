@@ -1,7 +1,7 @@
 /**
  * @name    MinSys
  * @author  DreamFuture6
- * @version 0.1.0
+ * @version 0.1.1
  * @date    2026/1/26
  * @brief   A soft real-time operating system for embedded hardware with low resource consumption.
  *
@@ -17,22 +17,21 @@
 #ifndef __SYSTEM_CORE_H
 #define __SYSTEM_CORE_H
 
-/* ↓↓↓ Modify Configuration Area ↓↓↓ */
-#include <stdint.h>      // device header file
-#define TASK_MAX_NUM  20 // value ≥ 1
-#define EVENT_MAX_NUM 10 // value ≥ 0
-/* ↑↑↑ Modify Configuration Area ↑↑↑ */
+#include "SystemConfig.h"
 
 #define SYS_PRINT_MSG(x) "[MinSys] " x
 #if TASK_MAX_NUM <= 0
-#error "TASK_MAX_NUM must be a positive integer (>=1)!"
+#error "'TASK_MAX_NUM' must be a positive integer (>=1)!"
 #elif TASK_MAX_NUM > 65535
-#error "TASK_MAX_NUM is too large (>65535)!"
+#error "'TASK_MAX_NUM' is too large (>65535)!"
 #endif
 #if EVENT_MAX_NUM < 0
-#error "EVENT_MAX_NUM must be a nonnegative integer (>=0)!"
+#error "'EVENT_MAX_NUM' must be a nonnegative integer (>=0)!"
 #elif EVENT_MAX_NUM == 0
-#pragma message(SYS_PRINT_MSG("Disable Function: message task."))
+#pragma message(SYS_PRINT_MSG("Disable Function: event task."))
+#ifdef AUTO_SLEEP
+#error "The 'AUTO_SLEEP' function requires enabling event task feature, meaning the 'TASK_MAX_NUM' must be a positive integer (>=1)!"
+#endif
 #else
 #define ENABLE_EVENT_TASK
 #endif
@@ -61,12 +60,17 @@ extern "C" {
 #endif
 /* Pending Interface */
 u32 System_GetCurrTick(void);
+#ifdef AUTO_SLEEP
+void System_Sleep(void);
+#endif
 
 /* System Function  */
 void System_Init(void);
 void System_Loop(void);
 void System_EndLoop(void);
-void System_RegisterIdleTask(TaskMainFunc func); // void (currIdleTick, lastIdleTick)
+#ifdef IDLE_HOOK_FUNCITON
+void System_RegisterIdleTask(TaskMainFunc func);
+#endif
 
 /* Task Creation Function */
 Task *System_AddNewLoopTask(TaskMainFunc func, u32 interval);
