@@ -7,7 +7,7 @@
 #define EVENT_MAX_NUM 8  // value ≥ 0
 
 /* Optional Features */
-// #define IDLE_HOOK_FUNCITON // Execute during idle time slots [void (currIdleTick, lastIdleTick)]
+// #define IDLE_HOOK_FUNCTION // Execute during idle time slots [void (currIdleTick, lastIdleTick)]
 // #define AUTO_SLEEP         // Only effective in the full event-driven framework
 
 /* Plugins */
