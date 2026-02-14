@@ -13,7 +13,7 @@ typedef u16 EvtIndex;
 typedef u8 EvtIndex;
 #endif
 
-#define __EndOfEvtList ((EvtIndex) - 1)
+#define __EndOfEvtList ((EvtIndex)(-1))
 
 typedef struct Event {
     u32 value;
@@ -24,6 +24,7 @@ typedef struct Event {
 
 static Event eventList[EVENT_MAX_NUM];
 static EvtIndex eventQueue[EVENT_MAX_NUM];
+static EvtHandle *endEvent = eventList + EVENT_MAX_NUM - 1;
 #endif
 
 typedef enum TaskType {
@@ -57,15 +58,16 @@ struct Task {
 };
 
 static bool looping;
-static u16 taskFlag; // [0~7]:delay [8]:delay [9]:close [10]:suspend
+static u16 taskFlag; // [0~7]:delay time [8]:delay [9]:close [10]:suspend
 #ifdef IDLE_HOOK_FUNCTION
 static TaskMainFunc idleTask;
 #endif
 
 static TaskIndex currTimeTaskIndex, currExecTaskIndex;
 static Task taskList[TASK_MAX_NUM];
+static TaskHandle *endTask = taskList + TASK_MAX_NUM - 1;
 
-#define __EndOfTaskList   ((TaskIndex) - 1)
+#define __EndOfTaskList   ((TaskIndex)(-1))
 #define DELAY_TIME_MASK   ((u16)((1U << 8) - 1))
 #define FLAG_DELAY_MASK   ((u16)(1U << 8))
 #define FLAG_CLOSE_MASK   ((u16)(1U << 9))
@@ -74,13 +76,9 @@ static Task taskList[TASK_MAX_NUM];
 
 #define __TaskIndex(task) (task - taskList)
 
-static inline bool __IsTaskParamInvalid(const Task *task)
+static inline bool __IsTaskParamInvalid(TaskHandle *task)
 {
-    if (task == NULL) {
-        return true;
-    }
-    static Task *end = taskList + TASK_MAX_NUM - 1;
-    return task < taskList || task > end || taskList[__TaskIndex(task)].func == NULL;
+    return task == NULL || task < taskList || task > endTask || taskList[__TaskIndex(task)].func == NULL;
 }
 
 static inline void __ClearTaskNode(Task *task)
@@ -124,6 +122,9 @@ static inline bool __SetNextNodeOfPrevTaskNode(Task *task, TaskIndex startNode)
             return true;
         }
     }
+    if (prev == __EndOfTaskList) {
+        return false;
+    }
     taskList[prev].next = task->next;
     return false;
 }
@@ -134,13 +135,9 @@ static inline void __ResetTaskExecuteEnv(void)
 }
 
 #ifdef ENABLE_EVENT_TASK
-static inline bool __IsEventParamInvalid(const Event *event)
+static inline bool __IsEventParamInvalid(EvtHandle *event)
 {
-    if (event == NULL) {
-        return true;
-    }
-    static Event *end = eventList + EVENT_MAX_NUM - 1;
-    return event < eventList || event > end || event->enable == false;
+    return event == NULL || event < eventList || event > endEvent || event->enable == false;
 }
 
 static inline void __DeleteEventTask(Task *task)
@@ -156,30 +153,30 @@ static inline void __DeleteEventTask(Task *task)
 
 static void __SystemEventHandlerTask(u32 count, u16 state)
 {
-    TaskIndex ti = __EndOfTaskList, ci = currExecTaskIndex;
+    TaskIndex prev = __EndOfTaskList, curr = currExecTaskIndex;
     for (EvtIndex ei = (EvtIndex)state; ei < EVENT_MAX_NUM; ++ei) {
         if (eventList[ei].enable) {
-            ti = eventList[ei].subList;
-            while (ti != __EndOfTaskList) {
-                if (taskList[ti].info.eventbased.nextRunTime && taskList[ti].info.eventbased.nextRunTime <= System_GetCurrTick()) {
-                    currExecTaskIndex = ti;
+            prev = eventList[ei].subList;
+            while (prev != __EndOfTaskList) {
+                if (taskList[prev].info.eventbased.nextRunTime && taskList[prev].info.eventbased.nextRunTime <= System_GetCurrTick()) {
+                    currExecTaskIndex = prev;
                     __ResetTaskExecuteEnv();
-                    taskList[ti].func(0, 0);
-                    taskList[ti].info.eventbased.nextRunTime = 0;
+                    taskList[prev].func(0, 0);
+                    taskList[prev].info.eventbased.nextRunTime = 0;
                     if (taskFlag) {
                         if (taskFlag & FLAG_CLOSE_MASK) {
-                            __DeleteEventTask(taskList + ti);
+                            __DeleteEventTask(taskList + prev);
                         } else if (taskFlag & FLAG_SUSPEND_MASK) {
-                            taskList[ti].info.eventbased.suspend = true;
+                            taskList[prev].info.eventbased.suspend = true;
                         } else if (taskFlag & FLAG_DELAY_MASK) {
-                            taskList[ti].info.eventbased.nextRunTime = System_GetCurrTick() + (taskFlag & DELAY_TIME_MASK);
+                            taskList[prev].info.eventbased.nextRunTime = System_GetCurrTick() + (taskFlag & DELAY_TIME_MASK);
                         }
                     }
-                    currExecTaskIndex = ci;
+                    currExecTaskIndex = curr;
                     Task_Yield(ei);
                     return;
                 }
-                ti = taskList[ti].next;
+                prev = taskList[prev].next;
             }
         }
     }
@@ -193,13 +190,14 @@ void System_Init(void)
     currExecTaskIndex = __EndOfTaskList;
     for (TaskIndex i = 0; i < TASK_MAX_NUM; ++i) {
         taskList[i].next = __EndOfTaskList;
+        taskList[i].info = (TaskInfo){0};
     }
 #ifdef IDLE_HOOK_FUNCTION
     idleTask = NULL;
 #endif
 #ifdef ENABLE_EVENT_TASK
     eventQueue[0] = __EndOfEvtList;
-    System_AddNewLoopTask(__SystemEventHandlerTask, 1);
+    System_AddNewTimeTask(__SystemEventHandlerTask, 1, false);
 #endif
 }
 
@@ -307,25 +305,12 @@ void System_EndLoop(void)
     looping = false;
 }
 
-const Task *System_AddNewLoopTask(TaskMainFunc func, u32 interval)
+TaskHandle *System_AddNewTimeTask(TaskMainFunc func, u32 interval, bool disposable)
 {
     for (Task *t = taskList + TASK_MAX_NUM - 1; t >= taskList; --t) {
         if (t->func == NULL) {
-            __InitTaskNode(t, TASKTYPE_CIRCULATE, func);
-            t->info.timebased.nextRunTime = System_GetCurrTick() + interval;
+            __InitTaskNode(t, disposable ? TASKTYPE_DISPOSABLE : TASKTYPE_CIRCULATE, func);
             t->info.timebased.interval    = interval;
-            __LinkTimebasedTaskNode(t);
-            return t;
-        }
-    }
-    return NULL;
-}
-
-const Task *System_AddNewTempTask(TaskMainFunc func, u32 interval)
-{
-    for (Task *t = taskList + TASK_MAX_NUM - 1; t >= taskList; --t) {
-        if (t->func == NULL) {
-            __InitTaskNode(t, TASKTYPE_DISPOSABLE, func);
             t->info.timebased.nextRunTime = System_GetCurrTick() + interval;
             __LinkTimebasedTaskNode(t);
             return t;
@@ -335,7 +320,7 @@ const Task *System_AddNewTempTask(TaskMainFunc func, u32 interval)
 }
 
 #ifdef ENABLE_EVENT_TASK
-const Task *System_AddNewEventTask(TaskMainFunc func, const Event *event, u16 signal)
+TaskHandle *System_AddNewEventTask(TaskMainFunc func, EvtHandle *event, u16 signal)
 {
     if (signal == 0 || __IsEventParamInvalid(event)) {
         return NULL;
@@ -362,7 +347,7 @@ const Task *System_AddNewEventTask(TaskMainFunc func, const Event *event, u16 si
 }
 #endif
 
-bool System_SuspendTask(const Task *task, u16 nextState)
+bool System_SuspendTask(TaskHandle *task, u16 nextState)
 {
     if (__IsTaskParamInvalid(task) || task->type == TASKTYPE_DISPOSABLE) {
         return false;
@@ -381,29 +366,36 @@ bool System_SuspendTask(const Task *task, u16 nextState)
     if (__SetNextNodeOfPrevTaskNode((Task *)task, currTimeTaskIndex)) {
         return false;
     }
-    ((Task *)task)->next      = __EndOfTaskList;
-    ((Task *)task)->execState = nextState;
+    ((Task *)task)->info.timebased.nextRunTime = 0;
+    ((Task *)task)->next                       = __EndOfTaskList;
+    ((Task *)task)->execState                  = nextState;
     return true;
 }
 
-bool System_ResumeTask(const Task *task, u16 execState, bool instance)
+bool System_ResumeTask(TaskHandle *task, u16 execState, bool instance)
 {
     if (__IsTaskParamInvalid(task) || task->type == TASKTYPE_DISPOSABLE) {
         return false;
     }
 #ifdef ENABLE_EVENT_TASK
     if (task->type == TASKTYPE_EVENT) {
+        if (((Task *)task)->info.eventbased.suspend) {
+            return false;
+        }
         ((Task *)task)->info.eventbased.suspend = false;
         return true;
     }
 #endif
+    if (((Task *)task)->info.timebased.nextRunTime != 0) {
+        return false;
+    }
     ((Task *)task)->execState                  = execState;
     ((Task *)task)->info.timebased.nextRunTime = System_GetCurrTick() + (instance ? 0 : task->info.timebased.interval);
     __LinkTimebasedTaskNode(task);
     return true;
 }
 
-bool System_KillTask(const Task *task)
+bool System_KillTask(TaskHandle *task)
 {
     if (__IsTaskParamInvalid(task)) {
         return false;
@@ -438,7 +430,7 @@ bool System_KillTask(const Task *task)
 }
 
 #ifdef ENABLE_EVENT_TASK
-const Event *System_CreateEvent(void)
+EvtHandle *System_CreateEvent(void)
 {
     for (EvtIndex i = 0; i < EVENT_MAX_NUM; ++i) {
         if (eventList[i].enable == false) {
@@ -452,7 +444,7 @@ const Event *System_CreateEvent(void)
     return NULL;
 }
 
-bool System_DeleteEvent(const Event *event)
+bool System_DeleteEvent(EvtHandle *event)
 {
     if (__IsEventParamInvalid(event) || event->subList != __EndOfTaskList) {
         return false;
@@ -461,9 +453,9 @@ bool System_DeleteEvent(const Event *event)
     return true;
 }
 
-bool System_SetEvent(const Event *event, u16 signal, u32 value)
+bool System_SetEvent(EvtHandle *event, u16 signal, u32 value)
 {
-    if (__IsEventParamInvalid(event) || signal == 0 || event->signal == signal) {
+    if (__IsEventParamInvalid(event) || signal == 0 || event->signal == signal || (currExecTaskIndex != __EndOfTaskList && taskList[currExecTaskIndex].type == TASKTYPE_EVENT && taskList[currExecTaskIndex].info.eventbased.event == event)) {
         return false;
     }
     ((Event *)event)->signal = signal;
@@ -482,7 +474,7 @@ bool System_SetEvent(const Event *event, u16 signal, u32 value)
     return false;
 }
 
-u16 System_GetEventSignal(const Event *event)
+u16 System_GetEventSignal(EvtHandle *event)
 {
     if (__IsEventParamInvalid(event)) {
         return 0;
@@ -512,15 +504,14 @@ bool Task_Delay(u16 ticks, u16 nextState)
     if (currExecTaskIndex == __EndOfTaskList) {
         return false;
     }
-    taskFlag |= (ticks & DELAY_TIME_MASK);
-    taskFlag |= FLAG_DELAY_MASK;
+    taskFlag                              = (taskFlag & (~DELAY_TIME_MASK)) | (ticks & DELAY_TIME_MASK) | FLAG_DELAY_MASK;
     taskList[currExecTaskIndex].execState = nextState;
     return true;
 }
 
 bool Task_Suspend(u16 nextState)
 {
-    if (currExecTaskIndex == __EndOfTaskList || taskList[currExecTaskIndex].type == TASKTYPE_DISPOSABLE || nextState) {
+    if (currExecTaskIndex == __EndOfTaskList || taskList[currExecTaskIndex].type == TASKTYPE_DISPOSABLE) {
         return false;
     }
     taskFlag |= FLAG_SUSPEND_MASK;
@@ -539,7 +530,11 @@ bool Task_ListenSignal(u16 newSignal)
 }
 #endif
 
-void Task_Close(void)
+bool Task_Close(void)
 {
+    if (currExecTaskIndex == __EndOfTaskList) {
+        return false;
+    }
     taskFlag |= FLAG_CLOSE_MASK;
+    return true;
 }

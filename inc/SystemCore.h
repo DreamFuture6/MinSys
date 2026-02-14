@@ -1,18 +1,18 @@
 /**
  * @name    MinSys
  * @author  DreamFuture6
- * @version 0.1.3
- * @date    2026/2/2
+ * @version 0.1.4
+ * @date    2026/2/14
  * @brief   A soft real-time operating system for embedded hardware with low resource consumption.
  *
  *            Task-Supported Operations Table
- *   ┌─────────────┬───────┬───────┬─────────┬───────┬───────┐   ┌───────────────────┐
- *   │  TASK TYPE  │ YIELD │ DELAY │ SUSPEND │ ASYNC │ CLOSE │   │  Main Func Param  │
- *   ├─────────────┼───────┼───────┼─────────┼───────┼───────┤   ├───────────────────┤
- *   │ circle task │   √   │   √   │    √    │   √   │   √   │   │  (count,  state)  │
- *   │ single task │   √   │   √   │    ×    │   ×   │   √   │   │  (0,      state)  │
- *   │ events task │   ×   │   √   │    √    │   √   │   √   │   │  (value, signal)  │  Note: When the delay ends, the params is (0,0)
- *   └─────────────┴───────┴───────┴─────────┴───────┴───────┘   └───────────────────┘
+ *   ┌─────────────┬───────┬───────┬─────────┬───────┐   ┌───────────────────┐
+ *   │  TASK TYPE  │ YIELD │ DELAY │ SUSPEND │ CLOSE │   │  Main Func Param  │
+ *   ├─────────────┼───────┼───────┼─────────┼───────┤   ├───────────────────┤
+ *   │ circle task │   √   │   √   │    √    │   √   │   │  (count,  state)  │
+ *   │ single task │   √   │   √   │    ×    │   √   │   │  (0,      state)  │
+ *   │ events task │   ×   │   √   │    √    │   √   │   │  (value, signal)  │  Note: When the delay ends, the params is (0,0)
+ *   └─────────────┴───────┴───────┴─────────┴───────┘   └───────────────────┘
  **/
 #ifndef __SYSTEM_CORE_H
 #define __SYSTEM_CORE_H
@@ -47,9 +47,11 @@ typedef int8_t s8;
 typedef int16_t s16;
 typedef int32_t s32;
 typedef void (*TaskMainFunc)(u32, u16); // task main function
-typedef struct Task Task;               // task handle
+typedef struct Task Task;
+typedef const Task TaskHandle; // task handle
 #ifdef ENABLE_EVENT_TASK
-typedef struct Event Event; // event handle
+typedef struct Event Event;
+typedef const Event EvtHandle; // event handle
 #endif
 
 #ifndef __cplusplus
@@ -77,23 +79,22 @@ void System_RegisterIdleTask(TaskMainFunc func);
 #endif
 
 /* Task Creation Function */
-const Task *System_AddNewLoopTask(TaskMainFunc func, u32 interval);
-const Task *System_AddNewTempTask(TaskMainFunc func, u32 interval);
+TaskHandle *System_AddNewTimeTask(TaskMainFunc func, u32 interval, bool disposable);
 #ifdef ENABLE_EVENT_TASK
-const Task *System_AddNewEventTask(TaskMainFunc func, const Event *event, u16 signal);
+TaskHandle *System_AddNewEventTask(TaskMainFunc func, EvtHandle *event, u16 signal);
 #endif
 
 /* Global Task Operation Function */
-bool System_SuspendTask(const Task *task, u16 nextState);
-bool System_ResumeTask(const Task *task, u16 execState, bool instance);
-bool System_KillTask(const Task *task);
+bool System_SuspendTask(TaskHandle *task, u16 nextState);
+bool System_ResumeTask(TaskHandle *task, u16 execState, bool instance);
+bool System_KillTask(TaskHandle *task);
 
 #ifdef ENABLE_EVENT_TASK
 /* Event Task Operation Function  */
-const Event *System_CreateEvent(void);
-bool System_DeleteEvent(const Event *event);
-bool System_SetEvent(const Event *event, u16 signal, u32 value);
-u16 System_GetEventSignal(const Event *event);
+EvtHandle *System_CreateEvent(void);
+bool System_DeleteEvent(EvtHandle *event);
+bool System_SetEvent(EvtHandle *event, u16 signal, u32 value);
+u16 System_GetEventSignal(EvtHandle *event);
 #endif
 
 /* Current Task Operation Function */
@@ -103,7 +104,7 @@ bool Task_Suspend(u16 nextState);
 #ifdef ENABLE_EVENT_TASK
 bool Task_ListenSignal(u16 newSignal);
 #endif
-void Task_Close(void);
+bool Task_Close(void);
 #ifdef __cplusplus
 }
 #endif
